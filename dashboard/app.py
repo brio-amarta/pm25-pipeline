@@ -116,7 +116,14 @@ vs = q(
     """
 )
 if vs.empty:
-    st.info("Nothing scored yet. Forecasts need 24h before reality catches up.")
+    # Specifically the +24h horizon, which is the last to come due. Shorter
+    # horizons may already be scored, and blocks 4 and 5 will show them --
+    # so this message must not claim that nothing has been scored at all.
+    st.info(
+        "No 24-hour-ahead forecast has come due yet. The first one is scored "
+        "24h after the pipeline's first run; shorter horizons are scored "
+        "below."
+    )
 else:
     long = vs.melt("target_ts", ["predicted", "actual"], "series", "value")
     st.altair_chart(

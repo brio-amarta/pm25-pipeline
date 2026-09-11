@@ -141,3 +141,85 @@ spurious — Apple's Accelerate BLAS leaves floating-point exception flags set
 after valid work and numpy reports them. Results are correct, and the
 warnings do not appear on Linux (Docker, GitHub Actions runners), which use
 OpenBLAS. See numpy issue #28687.
+
+---
+
+## Serving: Supabase REST instead of a deployed API
+
+**Decision.** The FastAPI service is built, containerised and verified, but not
+deployed to a public host. Reads for the iOS client go through Supabase's
+auto-generated REST endpoint instead.
+
+**Why.** Both Cloud Run and Render require a payment method before they will
+run a free container — it is anti-abuse verification, not a pricing tier. The
+pipeline itself never needed either: ingest, forecast and retrain run on
+GitHub Actions, and the data lives in Supabase. A deployed API would only add
+a public read path, and Supabase already provides one.
+
+**What that required.** Tables created by `init_schema()` have RLS disabled,
+which means any holder of the publishable key — a key that ships inside an app
+binary — could write to `forecasts`. That would destroy the one claim this
+project makes. So:
+
+- RLS enabled on all four tables, with no policies at all: direct table access
+  through PostgREST returns nothing.
+- Four read-only views expose exactly what a client needs: `forecast_latest`,
+  `actuals_recent`, `mae_by_horizon`, `pipeline_metrics`. Views are security
+  definer, so they read through RLS; `GRANT SELECT` to `anon` covers access.
+- The hourly cron is unaffected: it connects as `postgres`, the table owner,
+  and owners bypass RLS.
+
+Verified after the change — the cron still runs green, `pipeline_metrics`
+returns over the public internet, raw tables do not.
+
+**Tradeoff.** `/health` and `/metrics` compute things raw PostgREST cannot,
+so that logic was reimplemented as SQL views. The FastAPI service remains the
+documented interface and runs in Docker; it is simply not hosted.
+
+---
+
+## Why the model sees only its own history
+
+The feature set is lags, rolling statistics and calendar encodings of PM2.5
+alone. Roughly twenty other variables are available from Open-Meteo and none
+are used.
+
+This is deliberate scoping, not an oversight — `features.py` states it: the
+model is a prop, the pipeline is the project. Every mechanism here behaves
+identically whether the model has 1 feature or 50, so building the machinery
+first was the higher-value order.
+
+It is also a real limitation. PM2.5 at ground level is set by how much is
+emitted and how fast the atmosphere disperses it, and the model currently
+infers the second only indirectly, through daily patterns. The variables that
+would matter, in order: boundary layer height, wind speed, precipitation,
+relative humidity, wind direction, and pm10 (the pm2.5/pm10 ratio separates
+combustion from road dust).
+
+**The trap to avoid when adding them.** Only variables available *at
+prediction time* may be used. Forecasting +24h needs the *forecast* of wind
+and boundary layer height, not the later observation. Training on observed
+weather while serving on forecast weather is leakage: holdout MAE looks
+excellent and collapses in production. Open-Meteo's forecast endpoint provides
+all of these, so it is feasible — but the forecast must be what gets stored.
+
+The evaluation gate already exists to judge this honestly: add features,
+retrain, and if the candidate does not beat the incumbent it is recorded as
+rejected and nothing is deployed. Deferred until a stable production baseline
+exists to compare against.
+
+---
+
+## Live accuracy is still converging
+
+| When | Scored forecasts | Model MAE | CAMS MAE |
+|---|---|---|---|
+| 2026-09-11 midday | 36 | 34.51 | 28.53 |
+| 2026-09-11 afternoon | 40 | 31.92 | 26.98 |
+| 2026-09-11 evening | 55 | 25.07 | 22.55 |
+
+The first reading was not evidence of a bad model — it was a small sample from
+a single weather pattern, and it moved 9 points in a day as the count grew.
+Worth remembering before reacting to any single number here. Revisit after a
+week of cron data, and break error down per horizon (`mae_by_horizon`) before
+changing anything.
