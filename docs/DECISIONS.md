@@ -223,3 +223,35 @@ a single weather pattern, and it moved 9 points in a day as the count grew.
 Worth remembering before reacting to any single number here. Revisit after a
 week of cron data, and break error down per horizon (`mae_by_horizon`) before
 changing anything.
+
+---
+
+## The gate rejected something, unattended
+
+`retrain.yml` had never run. It was scheduled for Sunday 03:00 UTC, so a
+failure would have surfaced days later, at an hour nobody is watching — the
+same reason the runbook insists on verifying Parts 5, 6 and 8 locally. It was
+triggered by hand on 2026-09-11 instead.
+
+```
+holdout MAE      24.213  (4032 rows)
+naive baseline   32.184
+active model     22.9884
+REJECTED: worse than the model already serving. Nothing deployed.
+```
+
+The candidate cleared the first bar comfortably — 24.21 against a naive
+baseline of 32.18. In most pipelines that is where the story ends and the
+model ships. The second bar caught it: 24.21 is still worse than the 22.99
+already serving, so promotion was refused and the incumbent kept the slot.
+
+Two things this demonstrates that a passing run could not:
+
+- The second gate is the one that matters. Beating a naive baseline is a low
+  bar; a candidate can clear it and still be a regression. Comparing against
+  the incumbent is what makes the registry more than a changelog.
+- It happened on GitHub's runner with nobody watching, which is the condition
+  the gate exists for. A rejected row is now in `models`, and block 6 of the
+  dashboard shows both versions.
+
+The rejected row stays. It is the audit trail.
