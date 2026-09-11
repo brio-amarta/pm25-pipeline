@@ -1,0 +1,47 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SERVICE: pm25-forecast
+  REGION: asia-southeast2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Sanity check that everything imports
+        run: python -c "from src import api, train, predict, fetch, features"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy
+        run: |
+          gcloud run deploy $SERVICE \
+            --source . \
+            --region $REGION \
+            --allow-unauthenticated \
+            --memory 1Gi \
+            --min-instances 0 \
+            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }}"

@@ -1,0 +1,32 @@
+name: Hourly ingest and forecast
+
+on:
+  schedule:
+    # Ten past the hour. On the hour is the busiest slot on GitHub's
+    # scheduler and gets delayed most.
+    - cron: "10 * * * *"
+  workflow_dispatch: # so you can trigger it by hand while testing
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Ingest actuals, CAMS benchmark, and write forecasts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LATITUDE: ${{ vars.LATITUDE }}
+          LONGITUDE: ${{ vars.LONGITUDE }}
+        run: python -m src.predict
+
+# NOTE: GitHub disables scheduled workflows on repos with no activity for
+# about 60 days. That is the first thing that breaks if you walk away.
+# The dashboard's "last data pull" metric is how you find out.
